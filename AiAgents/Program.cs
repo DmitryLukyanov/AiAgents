@@ -1,4 +1,5 @@
-﻿using AiAgents;
+﻿using AiAgents.Plugins;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.Chat;
@@ -17,27 +18,31 @@ internal class Program
         var kernelBuilder = Kernel.CreateBuilder();
         kernelBuilder.AddOpenAIChatCompletion("gpt-4o-mini", apiKey);
         var kernel = kernelBuilder.Build();
-        kernel.Plugins.AddFromType<DotNetPlugin>(pluginName: nameof(DotNetPlugin), serviceProvider: null);
 
-        var kernelArguments = new KernelArguments(
-            new PromptExecutionSettings()
-            {
-                FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
-                // TODO: investigate why this doesn't work
-                ExtensionData = new Dictionary<string, object>() { { "projectName", "ai_output_lib" } }
-            });
-        // TODO: investigate why this doesn't work
-        // kernelArguments.Add("projectName", "ai_output_lib");
+        IServiceProvider CreatedServiceProvider<T>(T value) where T : class
+        {
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddSingleton<T>(value);
+            return new DefaultServiceProviderFactory().CreateServiceProvider(serviceCollection);
+        };
+
+        var settings = new DotNetAppSettings("../../../GeneratedCode", "class_lib");
+        kernel.Plugins.AddFromType<DotNetDeveloperPlugin>(pluginName: nameof(DotNetDeveloperPlugin), serviceProvider: CreatedServiceProvider(settings));
+        kernel.Plugins.AddFromType<DotNetTesterPlugin>(pluginName: nameof(DotNetTesterPlugin), serviceProvider: CreatedServiceProvider(settings));
 
         // Create the agents
         ChatCompletionAgent developerAgent =
-            new()
-            {
-                Name = DeveloperName,
-                Instructions = "Create a C# project with name {{$projectName}}. Then develop method that calculate factorial of provided number. Save the created method in the csharp file",
-                Kernel = kernel,
-                Arguments = kernelArguments
-            };
+             new()
+             {
+                 Name = DeveloperName,
+                 Instructions = "Create a C# project. Then develop method that calculate factorial of provided number. Save the created method in the csharp file",
+                 Kernel = kernel,
+                 Arguments = new KernelArguments(
+                    new PromptExecutionSettings()
+                    {
+                        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
+                    })
+             };
 
         ChatCompletionAgent testerAgent =
             new()
@@ -45,7 +50,11 @@ internal class Program
                 Name = TesterName,
                 Instructions = "Test that the provided method can calcualte the factorial of 10",
                 Kernel = kernel,
-                Arguments = kernelArguments
+                Arguments = new KernelArguments(
+                    new PromptExecutionSettings()
+                    {
+                        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
+                    })
             };
 
         // Define a kernel function for the selection strategy
