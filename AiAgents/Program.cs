@@ -1,5 +1,6 @@
 ﻿using AiAgents.Plugins;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.Chat;
@@ -12,6 +13,9 @@ internal class Program
         // Define the agent names for use in the function template
         const string DeveloperName = "Developer";
         const string TesterName = "Tester";
+        var inputArgs = args?.SingleOrDefault() ?? @"
+- Take the message from service bus with this connectionId: 'serviceBus-1'
+- Send this message to another service bus with the connectionId: 'serviceBus-2'""";
 
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY must be configured");
 
@@ -26,35 +30,54 @@ internal class Program
             return new DefaultServiceProviderFactory().CreateServiceProvider(serviceCollection);
         };
 
-        var settings = new DotNetAppSettings("../../../GeneratedCode", "class_lib");
-        kernel.Plugins.AddFromType<DotNetDeveloperPlugin>(pluginName: nameof(DotNetDeveloperPlugin), serviceProvider: CreatedServiceProvider(settings));
+        var settings = new DotNetAppSettings("../../../", Path.Combine("../../../", "GeneratedCode", "workflow.json"));
+        var saveFunc = kernel.Plugins.AddFromType<DotNetDeveloperPlugin>(pluginName: nameof(DotNetDeveloperPlugin), serviceProvider: CreatedServiceProvider(settings));
         kernel.Plugins.AddFromType<DotNetTesterPlugin>(pluginName: nameof(DotNetTesterPlugin), serviceProvider: CreatedServiceProvider(settings));
 
+        var examples = Directory
+            .EnumerateFiles(Path.Combine(settings.ProjectPath, "Examples"), "*.json", new EnumerationOptions() { MaxRecursionDepth = 3, RecurseSubdirectories = true })
+            .Select(f => File.ReadAllText(f))
+            .ToList();
+
+        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         // Create the agents
         ChatCompletionAgent developerAgent =
              new()
              {
                  Name = DeveloperName,
-                 Instructions = "Create a C# project. Then develop method that calculate factorial of provided number. Save the created method in the csharp file",
+                 Instructions = $@"
+Create an Azure LogicApp workflow.json with the following content:
+{inputArgs}
+
+if the $history already has records, modify the previously created 'fileContent', based on the errors in the $history.
+
+You can use the following workflow.json files as examples: ['{(string.Join("','", examples))}'] 
+Always save the content of the created or updated workflow file in the workflow.json file. 
+Use 'fileContent' variable name to put initialy generated content or updated. 
+Also, put explanation and consideration into 'considerations' input variable. 
+Put the last message from {{$history}} into 'testOutput' input argument",
+
                  Kernel = kernel,
                  Arguments = new KernelArguments(
                     new PromptExecutionSettings()
                     {
-                        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
-                    })
+                        FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+                    }),
+                 LoggerFactory = loggerFactory
              };
 
         ChatCompletionAgent testerAgent =
             new()
             {
                 Name = TesterName,
-                Instructions = "Test that the provided method can calcualte the factorial of 10",
+                Instructions = "Test the previously generated workflow.json. Never provide any parameters to plugins",
                 Kernel = kernel,
                 Arguments = new KernelArguments(
                     new PromptExecutionSettings()
                     {
                         FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
-                    })
+                    }),
+                LoggerFactory = loggerFactory
             };
 
         // Define a kernel function for the selection strategy
@@ -74,6 +97,9 @@ internal class Program
         - After {{{DeveloperName}}}, it is {{{TesterName}}}'s turn.
         - After {{{TesterName}}}, it is {{{DeveloperName}}}'s turn.
 
+        Always start with {{{DeveloperName}}}
+        Always use output from {{{TesterName}}} as input for {{{DeveloperName}}}
+
         History:
         {{$history}}
         """,
@@ -91,7 +117,7 @@ internal class Program
               // The prompt variable name for the history argument.
               HistoryVariableName = "history",
               // Save tokens by not including the entire history in the prompt
-              HistoryReducer = new ChatHistoryTruncationReducer(3),
+              HistoryReducer = new ChatHistoryTruncationReducer(3)
           };
 
 
@@ -100,7 +126,7 @@ internal class Program
             AgentGroupChat.CreatePromptFunctionForStrategy(
                 $$$"""
         Determine if the testing has been successfull.  If so, respond with a single word: yes
-
+        Ensure that last step is always testing step.
         History:
         {{$history}}
         """,
@@ -129,7 +155,7 @@ internal class Program
             {
                 ExecutionSettings = new() { SelectionStrategy = selectionStrategy, TerminationStrategy = terminationStrategy }
             };
-        chat.AddChatMessage(new ChatMessageContent(AuthorRole.Developer, "Make sure that the generated code follow all based practices"));
+        chat.AddChatMessage(new ChatMessageContent(AuthorRole.User, "Make sure that the generated workflow.json corresponds to azure logic app rules and can be then deployed to azure portal"));
         // invoke
         await foreach (ChatMessageContent response in chat.InvokeAsync())
         {

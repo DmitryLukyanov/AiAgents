@@ -1,0 +1,176 @@
+﻿{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "actions": {
+      "XML_Validation": {
+        "type": "XmlValidation",
+        "inputs": {
+          "content": "@triggerBody()",
+          "schema": {
+            "source": "LogicApp",
+            "name": "AliPurchaseOrder.xsd"
+          }
+        },
+        "runAfter": {}
+      },
+      "Transform_and_save": {
+        "type": "Scope",
+        "actions": {
+          "Transform_to_PurchaseOrder": {
+            "type": "Xslt",
+            "inputs": {
+              "content": "@triggerBody()",
+              "map": {
+                "source": "LogicApp",
+                "name": "AliPO_to_PurchaseOrder.xslt"
+              }
+            }
+          },
+          "Send_to_service_bus": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "entityName": "@parameters('received-orders-topic-name')",
+                "message": {
+                  "contentData": "@body('Transform_to_PurchaseOrder')",
+                  "contentType": "application/xml",
+                  "userProperties": {
+                    "OrderSource": "@{xpath(body('Transform_to_PurchaseOrder'), '/PurchaseOrder/OrderSource/text()')?[0]}",
+                    "ProductsNumber": "@{variables('OrderProductsNumber')}"
+                  }
+                }
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "serviceBus-1",
+                "operationId": "sendMessage",
+                "serviceProviderId": "/serviceProviders/serviceBus"
+              }
+            },
+            "runAfter": {
+              "Set_OrderId": [
+                "SUCCEEDED"
+              ]
+            }
+          },
+          "Set_OrderId": {
+            "type": "SetVariable",
+            "inputs": {
+              "name": "orderId",
+              "value": "@xpath(body('Transform_to_PurchaseOrder'), '/PurchaseOrder/OrderID/text()')?[0]"
+            },
+            "runAfter": {
+              "For_each_Item_in_order": [
+                "SUCCEEDED"
+              ]
+            }
+          },
+          "For_each_Item_in_order": {
+            "type": "Foreach",
+            "foreach": "@xpath(body('Transform_to_PurchaseOrder'), '/PurchaseOrder/Items/Item')",
+            "actions": {
+              "Count_product_positions": {
+                "type": "IncrementVariable",
+                "inputs": {
+                  "name": "OrderProductsNumber",
+                  "value": 1
+                }
+              }
+            },
+            "runAfter": {
+              "Transform_to_PurchaseOrder": [
+                "SUCCEEDED"
+              ]
+            }
+          }
+        },
+        "runAfter": {
+          "Variable_OrderProductsNumber": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Response_OK": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 200,
+          "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Response>\n    <PurchaseOrderId>@{variables('OrderId')}</PurchaseOrderId>\n</Response>"
+        },
+        "runAfter": {
+          "Transform_and_save": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Bad_Request": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 400
+        },
+        "runAfter": {
+          "XML_Validation": [
+            "FAILED"
+          ]
+        }
+      },
+      "Server_Error": {
+        "type": "Response",
+        "kind": "Http",
+        "inputs": {
+          "statusCode": 500
+        },
+        "runAfter": {
+          "Transform_and_save": [
+            "FAILED"
+          ]
+        }
+      },
+      "Variable_OrderId": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "OrderId",
+              "type": "string"
+            }
+          ]
+        },
+        "runAfter": {
+          "XML_Validation": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Variable_OrderProductsNumber": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "OrderProductsNumber",
+              "type": "integer",
+              "value": 0
+            }
+          ]
+        },
+        "runAfter": {
+          "Variable_OrderId": [
+            "SUCCEEDED"
+          ]
+        }
+      }
+    },
+    "contentVersion": "1.0.0.0",
+    "outputs": {},
+    "triggers": {
+      "Http_POST_AliExpressOrder": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "method": "POST"
+        }
+      }
+    }
+  },
+  "kind": "Stateful"
+}

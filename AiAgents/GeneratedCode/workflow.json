@@ -1,0 +1,68 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "actions": {
+      "Receive_message_from_service_bus": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "topicName": "source-topic",
+            "subscriptionName": "source-subscription",
+            "maxMessages": 1
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "serviceBus-1",
+            "operationId": "receiveTopicMessages",
+            "serviceProviderId": "/serviceProviders/serviceBus"
+          }
+        }
+      },
+      "Send_message_to_another_service_bus": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "entityName": "destination-topic",
+            "message": {
+              "contentData": "@triggerBody()?['contentData']",
+              "contentType": "application/json",
+              "userProperties": "@triggerBody()?['userProperties']"
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "serviceBus-2",
+            "operationId": "sendMessage",
+            "serviceProviderId": "/serviceProviders/serviceBus"
+          }
+        },
+        "runAfter": {
+          "Receive_message_from_service_bus": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Modify_file_content_if_error_in_history": {
+        "type": "If",
+        "expression": "@greater(length(history()), 0)",
+        "actions": {
+          "Update_file_content": {
+            "type": "SetVariable",
+            "inputs": {
+              "name": "fileContent",
+              "value": "<Updated content based on error in history>"
+            }
+          }
+        }
+      }
+    },
+    "triggers": {
+      "Manual_trigger": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "method": "POST"
+        }
+      }
+    }
+  },
+  "kind": "Stateful"
+}

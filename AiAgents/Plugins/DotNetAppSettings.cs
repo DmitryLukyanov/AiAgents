@@ -1,4 +1,4 @@
 ﻿namespace AiAgents.Plugins
 {
-    public record DotNetAppSettings(string ProjectPath, string ProjectName);
+    public record DotNetAppSettings(string ProjectPath, string FilePath);
 }

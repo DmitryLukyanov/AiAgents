@@ -1,0 +1,244 @@
+﻿{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "actions": {
+      "Delete_original_received_order": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "topicName": "receivedorders",
+            "subscriptionName": "all-orders",
+            "lockToken": "@triggerBody()?['lockToken']"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "serviceBus-1",
+            "operationId": "completeTopicMessageV2",
+            "serviceProviderId": "/serviceProviders/serviceBus"
+          }
+        },
+        "runAfter": {
+          "Send_failed_order_(invalid)": [
+            "SUCCEEDED"
+          ],
+          "Has_stock_for_all_items": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Validate_purchase_order": {
+        "type": "XmlValidation",
+        "inputs": {
+          "content": "@triggerBody()?['contentData']",
+          "schema": {
+            "source": "LogicApp",
+            "name": "PurchaseOrder.xsd"
+          }
+        },
+        "runAfter": {}
+      },
+      "Send_failed_order_(invalid)": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "entityName": "@parameters('failed-orders-topic-name')",
+            "message": {
+              "contentData": "@triggerBody()?['contentData']",
+              "contentType": "@triggerBody()?['contentType']",
+              "userProperties": {
+                "orderSource": "@{triggerBody()['userProperties']['orderSource']}",
+                "orderStatus": "Received",
+                "failReason": "Invalid"
+              }
+            }
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "serviceBus-1",
+            "operationId": "sendMessage",
+            "serviceProviderId": "/serviceProviders/serviceBus"
+          }
+        },
+        "runAfter": {
+          "Validate_purchase_order": [
+            "FAILED"
+          ]
+        }
+      },
+      "Variable_ItemStock": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "ItemStock",
+              "type": "integer",
+              "value": 0
+            }
+          ]
+        },
+        "runAfter": {
+          "Validate_purchase_order": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Variable_HasStock": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "HasStock",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "runAfter": {
+          "Variable_ItemStock": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "For_each_order_Item": {
+        "type": "Foreach",
+        "foreach": "@xpath(triggerBody()?['contentData'], '/PurchaseOrder/Items/Item')",
+        "actions": {
+          "Has_stock": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "equals": [
+                    "@variables('HasStock')",
+                    "@true"
+                  ]
+                }
+              ]
+            },
+            "actions": {
+              "Emulate_call_to_stock_service": {
+                "type": "SetVariable",
+                "inputs": {
+                  "name": "ItemStock",
+                  "value": "@rand(0, 100)"
+                }
+              },
+              "Recalculate_HasStock": {
+                "type": "SetVariable",
+                "inputs": {
+                  "name": "HasStock",
+                  "value": "@greater(variables('ItemStock'), int(xpath(xml(items('For_each_order_Item')), '/Item/Quantity/text()')[0]))"
+                },
+                "runAfter": {
+                  "Emulate_call_to_stock_service": [
+                    "SUCCEEDED"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "actions": {
+                "No_stock": {
+                  "type": "SetVariable",
+                  "inputs": {
+                    "name": "HasStock",
+                    "value": "@false"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "runAfter": {
+          "Variable_HasStock": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Has_stock_for_all_items": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@variables('HasStock')",
+                "@true"
+              ]
+            }
+          ]
+        },
+        "actions": {
+          "Send_preprocessed_order_to_service_bus": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "entityName": "preprocessedorders",
+                "message": {
+                  "contentData": "@triggerBody()?['contentData']",
+                  "contentType": "@triggerBody()?['contentType']",
+                  "userProperties": "@triggerBody()?['userProperties']"
+                }
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "serviceBus-1",
+                "operationId": "sendMessage",
+                "serviceProviderId": "/serviceProviders/serviceBus"
+              }
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Send_failed_order_(no_stock)": {
+              "type": "ServiceProvider",
+              "inputs": {
+                "parameters": {
+                  "entityName": "@parameters('failed-orders-topic-name')",
+                  "message": {
+                    "contentData": "@triggerBody()?['contentData']",
+                    "contentType": "@triggerBody()?['contentType']",
+                    "userProperties": {
+                      "orderSource": "@{triggerBody()['userProperties']['orderSource']}",
+                      "orderStatus": "Received",
+                      "failReason": "NoStock"
+                    }
+                  }
+                },
+                "serviceProviderConfiguration": {
+                  "connectionName": "serviceBus-1",
+                  "operationId": "sendMessage",
+                  "serviceProviderId": "/serviceProviders/serviceBus"
+                }
+              }
+            }
+          }
+        },
+        "runAfter": {
+          "For_each_order_Item": [
+            "SUCCEEDED"
+          ]
+        }
+      }
+    },
+    "contentVersion": "1.0.0.0",
+    "outputs": {},
+    "triggers": {
+      "When_there_are_received_orders": {
+        "type": "ServiceProvider",
+        "inputs": {
+          "parameters": {
+            "topicName": "@parameters('received-orders-topic-name')",
+            "subscriptionName": "all-orders",
+            "isSessionsEnabled": false,
+            "maxMessageBatchSize": "@parameters('preprocess-po-batch-size')"
+          },
+          "serviceProviderConfiguration": {
+            "connectionName": "serviceBus-1",
+            "operationId": "receiveTopicMessages",
+            "serviceProviderId": "/serviceProviders/serviceBus"
+          }
+        },
+        "splitOn": "@triggerOutputs()?['body']"
+      }
+    }
+  },
+  "kind": "Stateful"
+}
