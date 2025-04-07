@@ -7,9 +7,9 @@ namespace AiAgents.Plugins
 {
     public sealed class DotNetTesterPlugin(DotNetAppSettings settings)
     {
-        [KernelFunction("TestCsharpApplication"), Description(@"
+        [KernelFunction("TestGeneratedWorkflowJson"), Description(@"
 Test a previouly created workflow.json")]
-        [return: Description("Determine if the testing has been successfull.  If so, the response will be just: yes. Any other text will contain an error details")]
+        [return: Description("Determine if the testing has been successfull.  If so, the response will be just: true. Any other text will contain an error details")]
         public async Task<string> TestApplication()
         {
             var schemaUrl = "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#";

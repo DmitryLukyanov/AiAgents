@@ -10,7 +10,8 @@ namespace AiAgents.Plugins
         public async Task<string> SaveTheGeneratedWorkflowJson(
             [Description("The list of consideration used to generate workflow.json content")] string considerations,
             [Description("The workflow.json content")] string fileContent,
-            [Description("The $history value")] string testOutput)
+            [Description(@"
+The testOutput value that represents the last message from Tester agent. If tester agent has not been called. Leave it empty")] string testOutput)
         {
             try
             {

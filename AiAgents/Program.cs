@@ -1,4 +1,5 @@
-﻿using AiAgents.Plugins;
+﻿using AiAgents.Filters;
+using AiAgents.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
@@ -31,8 +32,9 @@ internal class Program
         };
 
         var settings = new DotNetAppSettings("../../../", Path.Combine("../../../", "GeneratedCode", "workflow.json"));
-        var saveFunc = kernel.Plugins.AddFromType<DotNetDeveloperPlugin>(pluginName: nameof(DotNetDeveloperPlugin), serviceProvider: CreatedServiceProvider(settings));
+        kernel.Plugins.AddFromType<DotNetDeveloperPlugin>(pluginName: nameof(DotNetDeveloperPlugin), serviceProvider: CreatedServiceProvider(settings));
         kernel.Plugins.AddFromType<DotNetTesterPlugin>(pluginName: nameof(DotNetTesterPlugin), serviceProvider: CreatedServiceProvider(settings));
+        kernel.AutoFunctionInvocationFilters.Add(new EarlyPluginChainTerminationFilter());
 
         var examples = Directory
             .EnumerateFiles(Path.Combine(settings.ProjectPath, "Examples"), "*.json", new EnumerationOptions() { MaxRecursionDepth = 3, RecurseSubdirectories = true })
@@ -49,13 +51,13 @@ internal class Program
 Create an Azure LogicApp workflow.json with the following content:
 {inputArgs}
 
-if the $history already has records, modify the previously created 'fileContent', based on the errors in the $history.
+if the chat history already has records, modify the previously created 'fileContent' based on the errors in the history.
 
 You can use the following workflow.json files as examples: ['{(string.Join("','", examples))}'] 
 Always save the content of the created or updated workflow file in the workflow.json file. 
 Use 'fileContent' variable name to put initialy generated content or updated. 
 Also, put explanation and consideration into 'considerations' input variable. 
-Put all messages from {{$history}} into 'testOutput' input argument",
+Put the content of the last message from {{{TesterName}}} agent into 'testOutput' input argument",
 
                  Kernel = kernel,
                  Arguments = new KernelArguments(
@@ -139,7 +141,7 @@ Put all messages from {{$history}} into 'testOutput' input argument",
               Agents = [testerAgent],
               // Parse the function response.
               ResultParser = (result) =>
-                result.GetValue<string>()?.Contains("yes", StringComparison.OrdinalIgnoreCase) ?? false,
+                result.GetValue<string>()?.Equals("yes", StringComparison.OrdinalIgnoreCase) ?? false,
               // The prompt variable name for the history argument.
               HistoryVariableName = "history",
               // Save tokens by not including the entire history in the prompt
@@ -153,7 +155,12 @@ Put all messages from {{$history}} into 'testOutput' input argument",
         AgentGroupChat chat =
             new(developerAgent, testerAgent)
             {
-                ExecutionSettings = new() { SelectionStrategy = selectionStrategy, TerminationStrategy = terminationStrategy }
+                ExecutionSettings = new()
+                {
+                    SelectionStrategy = selectionStrategy,
+                    TerminationStrategy = terminationStrategy
+                },
+                LoggerFactory = loggerFactory
             };
         chat.AddChatMessage(new ChatMessageContent(AuthorRole.User, "Make sure that the generated workflow.json corresponds to azure logic app rules and can be then deployed to azure portal"));
         // invoke
