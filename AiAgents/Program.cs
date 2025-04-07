@@ -55,7 +55,7 @@ You can use the following workflow.json files as examples: ['{(string.Join("','"
 Always save the content of the created or updated workflow file in the workflow.json file. 
 Use 'fileContent' variable name to put initialy generated content or updated. 
 Also, put explanation and consideration into 'considerations' input variable. 
-Put the last message from {{$history}} into 'testOutput' input argument",
+Put all messages from {{$history}} into 'testOutput' input argument",
 
                  Kernel = kernel,
                  Arguments = new KernelArguments(
